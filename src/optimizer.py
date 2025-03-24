@@ -1,7 +1,7 @@
 import cvxpy as cp
 import numpy as np
 
-def average_optimizer(predicted_values, emissions, old_weights, current_values):
+def average_optimizer(predicted_values, emissions, old_weights, current_values, sector_indices):
     n = len(old_weights)
 
     # Variable to optimize
@@ -21,6 +21,9 @@ def average_optimizer(predicted_values, emissions, old_weights, current_values):
     old_emissions = np.sum(emissions * old_weights)
     old_predicted_valuess = np.sum(current_values * old_weights)
 
+    # Sector limit
+    sector_limit = 0.025
+
     # Define constraints
     constraints = [
         cp.sum(cp.multiply(emissions, weights)) <= old_emissions*0.8,   # Emissions cap
@@ -29,6 +32,10 @@ def average_optimizer(predicted_values, emissions, old_weights, current_values):
         cp.sum(cp.multiply(current_values, weights)) == cp.sum(cp.multiply(current_values, old_weights)), # Means we can't magic in more money
         cp.sum(cp.abs(weights - old_weights)) <= 0.15,  # Total change in weights
     ]
+
+    for indices in sector_indices:
+        if indices:
+            constraints.append(cp.sum(cp.abs(weights[indices] - old_weights[indices])) <= sector_limit) 
 
     # Solve
     prob = cp.Problem(objective, constraints)

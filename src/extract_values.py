@@ -11,7 +11,9 @@ def extract_values(file, companies, curr_Date, end_Date):
     US_end_Date = pd.to_datetime(end_Date, dayfirst=True).strftime('%m/%d/%Y')
 
     # Filter based on the Date range
-    filtered_df = df[(df['Date'] >= '01/01/2020') & (df['Date'] <= US_curr_Date)]
+    filtered_df = df[(df['Date'] >= '01/01/2020') & (df['Date'] <= US_curr_Date)].copy()
+    filtered_df.interpolate(method='linear', inplace=True, limit_direction='both', axis=0)
+
 
     # Get the Dates column data for the next 60 rows after the filtered_df
     future_dates = df[(df['Date'] > US_curr_Date) & (df['Date'] <= US_end_Date)]

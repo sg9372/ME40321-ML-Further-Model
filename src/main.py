@@ -5,10 +5,11 @@ import traceback
 
 from src.extract_sheet_names import get_sheet_names
 from src.extract_sheet_data import extract_sheet_data
-#from src.format_sector_weights import determine_sector_weights
+from src.format_sector_weights import determine_sector_weights
 from src.optimizer import average_optimizer
 from src.extract_values import extract_values
 from src.format_weights import format_weights
+from src.get_sector_indicies import get_sector_indicies
 from src.write_df import write_df
 from src.ML_Models.xgboost_daily_analysis import xgboost_daily_analysis, justTest
 
@@ -17,22 +18,22 @@ def main():
     file = "Monthly FTSE Data - New.xlsx"
 
     # Sectors list
-#    all_sectors = [
-#    "Finance and Insurance",
-#    "Manufacturing",
-#    "Mining, Quarrying, and Oil and Gas Extraction",
-#    "Wholesale Trade",
-#    "Information",
-#    "Utilities",
-#    "Real Estate and Rental and Leasing",
-#    "Transportation and Warehousing",
-#    "Professional, Scientific, and Technical Services",
-#    "Construction",
-#    "Accommodation and Food Services",
-#    "Arts, Entertainment, and Recreation",
-#    "Administrative and Support and Waste Management and Remediation Services",
-#    "Retail Trade"
-#]
+    all_sectors = [
+    "Finance and Insurance",
+    "Manufacturing",
+    "Mining, Quarrying, and Oil and Gas Extraction",
+    "Wholesale Trade",
+    "Information",
+    "Utilities",
+    "Real Estate and Rental and Leasing",
+    "Transportation and Warehousing",
+    "Professional, Scientific, and Technical Services",
+    "Construction",
+    "Accommodation and Food Services",
+    "Arts, Entertainment, and Recreation",
+    "Administrative and Support and Waste Management and Remediation Services",
+    "Retail Trade"
+]
    
     # Obtain sheet names and date ranges
     all_sheet_names, all_dates = get_sheet_names(file)
@@ -52,11 +53,11 @@ def main():
     optimized_weights_df = pd.DataFrame(columns=['Date'] + all_companies)
     old_weights_df = pd.DataFrame(columns=['Date'] + all_companies)
 
-    #old_sectors_df = pd.DataFrame(columns=['Date'] + all_sectors)
-    #optimized_sectors_df = pd.DataFrame(columns=['Date'] + all_sectors)
+    old_sectors_df = pd.DataFrame(columns=['Date'] + all_sectors)
+    optimized_sectors_df = pd.DataFrame(columns=['Date'] + all_sectors)
 
     # Iterate through each date range
-    for i in range(6): # len(dates)-1
+    for i in range(len(dates)-1): # len(dates)-1
         start_date = datetime.strptime(dates[i], '%d/%m/%Y') + pd.DateOffset(days=1)
         start_date = start_date.strftime('%d/%m/%Y')
         end_date = dates[i+1]
@@ -64,7 +65,7 @@ def main():
         print(start_date)
 
         # Extract sheet data
-        companies, weights, emissions, _ = extract_sheet_data(file, sheet_name)
+        companies, weights, emissions, company_sectors = extract_sheet_data(file, sheet_name)
 
         # Extract values data
         values, dates_range = extract_values(file, companies, start_date, end_date)
@@ -97,30 +98,33 @@ def main():
             # Calculate the mean of future predictions
             predicted_average_values.append(np.mean(future_predictions))
 
+        # Get sector indicies
+        sector_indices = get_sector_indicies(all_sectors, company_sectors)
+
         # Current values
         current_values = values[-1, :]
 
         # Calculate optimal weights
-        optimized_weights = average_optimizer(predicted_average_values, emissions, weights, current_values)
+        optimized_weights = average_optimizer(predicted_average_values, emissions, weights, current_values, sector_indices)
         
         # Put new weights in "all company list" format
         formatted_optimized_weights_df = format_weights(all_companies, companies, optimized_weights, dates_range)
         formatted_old_weights_df = format_weights(all_companies, companies, weights, dates_range)
 
         # Put new sectors into correct format
-        #formatted_optimized_sectors_df = determine_sector_weights(all_sectors, company_sectors, optimized_weights)
-        #formatted_old_sectors_df = determine_sector_weights(all_sectors, company_sectors, weights)
+        formatted_optimized_sectors_df = determine_sector_weights(all_sectors, company_sectors, optimized_weights, dates_range)
+        formatted_old_sectors_df = determine_sector_weights(all_sectors, company_sectors, weights, dates_range)
         
         # Append new weights to new_weights_df
         optimized_weights_df = pd.concat([optimized_weights_df, formatted_optimized_weights_df], ignore_index=True)
         old_weights_df = pd.concat([old_weights_df, formatted_old_weights_df], ignore_index=True)
 
         #Append to sectors dfs.
-        #optimized_sectors = pd.concat([optimized_sectors_df, formatted_optimized_sectors_df], ignore_index=True)
-        #old_sectors = pd.concat([old_sectors_df, formatted_old_sectors_df], ignore_index=True) 
+        optimized_sectors_df = pd.concat([optimized_sectors_df, formatted_optimized_sectors_df], ignore_index=True)
+        old_sectors_df = pd.concat([old_sectors_df, formatted_old_sectors_df], ignore_index=True) 
 
     # Write df to new sheet
-    write_df(optimized_weights_df, old_weights_df)
+    write_df(optimized_weights_df, old_weights_df, optimized_sectors_df, old_sectors_df)
     
 if __name__ == "__main__":
     import sys
