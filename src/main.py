@@ -7,11 +7,11 @@ from src.extract_sheet_names import get_sheet_names
 from src.extract_sheet_data import extract_sheet_data
 from src.format_sector_weights import determine_sector_weights
 from src.optimizer import average_optimizer
-from src.extract_values import extract_values
+from src.extract_values import extract_values, extract_all_values
 from src.format_weights import format_weights
 from src.get_sector_indicies import get_sector_indicies
 from src.write_df import write_df
-from src.ML_Models.xgboost_daily_analysis import xgboost_daily_analysis, justTest
+from src.ML_Models.xgboost_daily_analysis import xgboost_daily_analysis, justTest, xgboost_add_training, new_model
 
 def main():    
     # File name
@@ -34,15 +34,17 @@ def main():
     "Administrative and Support and Waste Management and Remediation Services",
     "Retail Trade"
 ]
-   
+    # Define model start date
+    optimization_start_date = '01/09/2022'
+
     # Obtain sheet names and date ranges
     all_sheet_names, all_dates = get_sheet_names(file)
 
     sheet_names = []
     dates = []
     for i in range(len(all_dates)):
-        # Skip dates before 01/09/2022
-        if datetime.strptime(all_dates[i], '%d/%m/%Y') > datetime.strptime('01/09/2022', '%d/%m/%Y'):
+        # Skip dates before start date
+        if datetime.strptime(all_dates[i], '%d/%m/%Y') > datetime.strptime(optimization_start_date, '%d/%m/%Y'):
             dates.append(all_dates[i])
             sheet_names.append(all_sheet_names[i])
 
@@ -56,10 +58,28 @@ def main():
     old_sectors_df = pd.DataFrame(columns=['Date'] + all_sectors)
     optimized_sectors_df = pd.DataFrame(columns=['Date'] + all_sectors)
 
+    # Define ideal window size
+    ideal_window_size = 640
+
+    # Initial training for each company's model
+    model_dict = dict.fromkeys(all_companies)
+    all_values = extract_all_values(file, optimization_start_date)
+    print("Training models on data up to:", optimization_start_date)
+    for i in range(len(all_companies)):
+        # Clean data
+        values = all_values[~np.isnan(all_values[:,i]),i]
+        if i%10==0:
+            print("Training company:", i)
+        if len(values)!=0:    
+            # Create new model
+            model, window_size = new_model(values, ideal_window_size)
+            model_dict[all_companies[i]] = {"model" : model, "window_size" : window_size} 
+
     # Iterate through each date range
-    for i in range(len(dates)-1): # len(dates)-1
-        start_date = datetime.strptime(dates[i], '%d/%m/%Y') + pd.DateOffset(days=1)
-        start_date = start_date.strftime('%d/%m/%Y')
+    print(len(dates))
+    for i in range(1, len(dates)-1): # len(dates)-1
+        start_date = dates[i-1]
+        curr_date = dates[i]
         end_date = dates[i+1]
         sheet_name = sheet_names[i]
         print(start_date)
@@ -68,7 +88,7 @@ def main():
         companies, weights, emissions, company_sectors = extract_sheet_data(file, sheet_name)
 
         # Extract values data
-        values, dates_range = extract_values(file, companies, start_date, end_date)
+        values, dates_range, end_date_values = extract_values(file, companies, start_date, curr_date, end_date, ideal_window_size)
         
         # Clean data
         if np.isnan(values).any():
@@ -76,27 +96,31 @@ def main():
             weights = np.nan_to_num(weights)
 
         # Predict future average values
-        predicted_average_values = []
-        for i in range(len(companies)):
-            # Remove NaN values from the column NEED TO MAKE THIS SO IT REMOVES
-            values[:, i] = np.nan_to_num(values[:, i])
-            if i%10==0:
-                print("Company", i)
-                
-            # Ensure correct window_size
-            if len(values[:,i])<640:
-                window_size=len(values[:,i])
-            else:
-                window_size=640
+        predicted_values = []
+        for j in range(len(companies)):
+            if j%10==0:
+                print("Predicting company:", j)
 
-            # Train the model
-            model, _ = xgboost_daily_analysis(values[:,i], window_size, justTrain=True)
+            # Remove NaN values from the column
+            new_values = values[~np.isnan(values[:,j]),j]
+
+            # Get model
+            if model_dict[companies[j]]==None or model_dict[companies[j]]['window_size']<640: # Uncomplete model (less than 640 days of data)
+                # Make new model
+                model, window_size = new_model(new_values, len(new_values))
+                model_dict[companies[j]] = {"model" : model, "window_size" : window_size} 
+            else:                                           # Complete model (more than 640 days of data)
+                # Add training to model and update model
+                model_dict[companies[j]]['model'] = xgboost_add_training(model_dict[companies[j]]['model'], new_values, ideal_window_size)
             
             # Predict
-            future_predictions = justTest(model, values[-window_size:,i], 60)
+            model = model_dict[companies[j]]['model']
+            window_size = model_dict[companies[j]]['window_size']
+            days_ahead = 13
+            future_predictions = justTest(model, new_values[-window_size:], days_ahead)
             
             # Calculate the mean of future predictions
-            predicted_average_values.append(np.mean(future_predictions))
+            predicted_values.append(future_predictions[-1])
 
         # Get sector indicies
         sector_indices = get_sector_indicies(all_sectors, company_sectors)
@@ -105,12 +129,17 @@ def main():
         current_values = values[-1, :]
 
         # Calculate optimal weights
-        optimized_weights = average_optimizer(predicted_average_values, emissions, weights, current_values, sector_indices)
+        if i==1:    
+            optimized_weights = average_optimizer(predicted_values, emissions, weights, current_values, sector_indices)
+        else:
+            optimized_weights = average_optimizer(predicted_values, emissions, weights, current_values, sector_indices, end_of_last_sector_portfolio_value)
         
+        end_of_last_sector_portfolio_value = np.sum(end_date_values * optimized_weights)
+
+
         # Put new weights in "all company list" format
         formatted_optimized_weights_df = format_weights(all_companies, companies, optimized_weights, dates_range)
         formatted_old_weights_df = format_weights(all_companies, companies, weights, dates_range)
-
         # Put new sectors into correct format
         formatted_optimized_sectors_df = determine_sector_weights(all_sectors, company_sectors, optimized_weights, dates_range)
         formatted_old_sectors_df = determine_sector_weights(all_sectors, company_sectors, weights, dates_range)
@@ -118,10 +147,11 @@ def main():
         # Append new weights to new_weights_df
         optimized_weights_df = pd.concat([optimized_weights_df, formatted_optimized_weights_df], ignore_index=True)
         old_weights_df = pd.concat([old_weights_df, formatted_old_weights_df], ignore_index=True)
-
         #Append to sectors dfs.
         optimized_sectors_df = pd.concat([optimized_sectors_df, formatted_optimized_sectors_df], ignore_index=True)
-        old_sectors_df = pd.concat([old_sectors_df, formatted_old_sectors_df], ignore_index=True) 
+        old_sectors_df = pd.concat([old_sectors_df, formatted_old_sectors_df], ignore_index=True)
+
+        current_portfolio_value = np.sum(np.multiply(current_values, weights))
 
     # Write df to new sheet
     write_df(optimized_weights_df, old_weights_df, optimized_sectors_df, old_sectors_df)

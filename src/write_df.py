@@ -12,7 +12,7 @@ def write_df(file, new_weights_df):
 
 def write_df(new_weights_df, old_weights_df, optimized_sectors, old_sectors):
     # Define new file name
-    new_file_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".xlsx"
+    new_file_name = "ML_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".xlsx"
     
     # Write the DataFrame to the new file
     with pd.ExcelWriter(new_file_name, engine='openpyxl') as writer:
